@@ -274,7 +274,6 @@ impl QuicClient {
         let mut send_stream = connection.open_uni().await?;
 
         send_stream.write_all(data).await?;
-        send_stream.finish().await?;
         Ok(())
     }
 
@@ -486,28 +485,9 @@ impl QuicClient {
             .await
             .map_err(Into::<ClientErrorKind>::into)?;
 
-        // Used to avoid dereferencing the Arc multiple times below
-        // by just getting a reference to the NewConnection once
-        let connection_ref: &Connection = &connection;
-
-        let chunks = buffers[1..buffers.len()].iter().chunks(self.chunk_size);
-
-        let futures: Vec<_> = chunks
-            .into_iter()
-            .map(|buffs| {
-                join_all(
-                    buffs
-                        .into_iter()
-                        .map(|buf| Self::_send_buffer_using_conn(buf.as_ref(), connection_ref)),
-                )
-            })
-            .collect();
-
-        for f in futures {
-            f.await
-                .into_iter()
-                .try_for_each(|res| res)
-                .map_err(Into::<ClientErrorKind>::into)?;
+        for data in buffers[1..buffers.len()].iter() {
+            let mut send_stream = connection.open_uni().await.map_err(QuicError::from)?;
+            send_stream.write_all(data.as_ref()).await.map_err(QuicError::from)?;
         }
         Ok(())
     }
