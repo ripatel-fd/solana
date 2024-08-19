@@ -14,10 +14,7 @@ use {
         consensus::{tower_storage::TowerStorage, Tower},
         cost_update_service::CostUpdateService,
         drop_bank_service::DropBankService,
-        repair::{
-            quic_endpoint::LocalRequest,
-            repair_service::{OutstandingShredRepairs, RepairInfo},
-        },
+        repair::repair_service::{OutstandingShredRepairs, RepairInfo},
         replay_stage::{ReplayStage, ReplayStageConfig},
         rewards_recorder_service::RewardsRecorderSender,
         shred_fetch_stage::ShredFetchStage,
@@ -155,7 +152,6 @@ impl Tvu {
         banking_tracer: Arc<BankingTracer>,
         turbine_quic_endpoint_sender: AsyncSender<(SocketAddr, Bytes)>,
         turbine_quic_endpoint_receiver: Receiver<(Pubkey, SocketAddr, Bytes)>,
-        repair_quic_endpoint_sender: AsyncSender<LocalRequest>,
         outstanding_repair_requests: Arc<RwLock<OutstandingShredRepairs>>,
         cluster_slots: Arc<ClusterSlots>,
         wen_restart_repair_slots: Option<Arc<RwLock<Vec<Slot>>>>,
@@ -174,13 +170,10 @@ impl Tvu {
         let repair_socket = Arc::new(repair_socket);
         let ancestor_hashes_socket = Arc::new(ancestor_hashes_socket);
         let fetch_sockets: Vec<Arc<UdpSocket>> = fetch_sockets.into_iter().map(Arc::new).collect();
-        let (repair_quic_endpoint_response_sender, repair_quic_endpoint_response_receiver) =
-            unbounded();
         let fetch_stage = ShredFetchStage::new(
             fetch_sockets,
             turbine_quic_endpoint_receiver,
             repair_socket.clone(),
-            repair_quic_endpoint_response_receiver,
             fetch_sender,
             tvu_config.shred_version,
             bank_forks.clone(),
@@ -240,8 +233,6 @@ impl Tvu {
                 retransmit_sender,
                 repair_socket,
                 ancestor_hashes_socket,
-                repair_quic_endpoint_sender,
-                repair_quic_endpoint_response_sender,
                 exit.clone(),
                 repair_info,
                 leader_schedule_cache.clone(),
@@ -436,8 +427,6 @@ pub mod tests {
         let (turbine_quic_endpoint_sender, _turbine_quic_endpoint_receiver) =
             tokio::sync::mpsc::channel(/*capacity:*/ 128);
         let (_turbine_quic_endpoint_sender, turbine_quic_endpoint_receiver) = unbounded();
-        let (repair_quic_endpoint_sender, _repair_quic_endpoint_receiver) =
-            tokio::sync::mpsc::channel(/*buffer:*/ 128);
         //start cluster_info1
         let cluster_info1 = ClusterInfo::new(
             target1.info.clone(),
@@ -529,7 +518,6 @@ pub mod tests {
             BankingTracer::new_disabled(),
             turbine_quic_endpoint_sender,
             turbine_quic_endpoint_receiver,
-            repair_quic_endpoint_sender,
             outstanding_repair_requests,
             cluster_slots,
             wen_restart_repair_slots,

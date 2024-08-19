@@ -24,7 +24,7 @@ pub(crate) struct LegacyContactInfo {
     tvu: SocketAddr,
     /// TVU over QUIC protocol.
     tvu_quic: SocketAddr,
-    /// repair service over QUIC protocol.
+    /// repair service over QUIC protocol. (unused)
     serve_repair_quic: SocketAddr,
     /// transactions address
     tpu: SocketAddr,
@@ -196,13 +196,13 @@ impl TryFrom<&ContactInfo> for LegacyContactInfo {
             gossip: unwrap_socket!(gossip),
             tvu: unwrap_socket!(tvu, Protocol::UDP),
             tvu_quic: unwrap_socket!(tvu, Protocol::QUIC),
-            serve_repair_quic: unwrap_socket!(serve_repair, Protocol::QUIC),
+            serve_repair_quic: socketaddr_any!(),
             tpu: unwrap_socket!(tpu, Protocol::UDP),
             tpu_forwards: unwrap_socket!(tpu_forwards, Protocol::UDP),
             tpu_vote: unwrap_socket!(tpu_vote),
             rpc: unwrap_socket!(rpc),
             rpc_pubsub: unwrap_socket!(rpc_pubsub),
-            serve_repair: unwrap_socket!(serve_repair, Protocol::UDP),
+            serve_repair: unwrap_socket!(serve_repair),
             wallclock: node.wallclock(),
             shred_version: node.shred_version(),
         })

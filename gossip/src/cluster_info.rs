@@ -855,7 +855,7 @@ impl ClusterInfo {
                         self.addr_to_string(&ip_addr, &node.tpu_forwards(contact_info::Protocol::UDP).ok()),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::UDP).ok()),
                         self.addr_to_string(&ip_addr, &node.tvu(contact_info::Protocol::QUIC).ok()),
-                        self.addr_to_string(&ip_addr, &node.serve_repair(contact_info::Protocol::UDP).ok()),
+                        self.addr_to_string(&ip_addr, &node.serve_repair().ok()),
                         node.shred_version(),
                     ))
                 }
@@ -1406,7 +1406,7 @@ impl ClusterInfo {
                 node.pubkey() != &self_pubkey
                     && node.shred_version() == self_shred_version
                     && self.check_socket_addr_space(&node.tvu(contact_info::Protocol::UDP))
-                    && self.check_socket_addr_space(&node.serve_repair(contact_info::Protocol::UDP))
+                    && self.check_socket_addr_space(&node.serve_repair())
                     && match gossip_crds.get::<&LowestSlot>(*node.pubkey()) {
                         None => true, // fallback to legacy behavior
                         Some(lowest_slot) => lowest_slot.lowest <= slot,
@@ -2869,7 +2869,6 @@ pub struct Sockets {
     pub repair: UdpSocket,
     pub retransmit_sockets: Vec<UdpSocket>,
     pub serve_repair: UdpSocket,
-    pub serve_repair_quic: UdpSocket,
     pub ancestor_hashes_requests: UdpSocket,
     pub tpu_quic: Vec<UdpSocket>,
     pub tpu_forwards_quic: Vec<UdpSocket>,
@@ -2950,7 +2949,6 @@ impl Node {
         let broadcast = vec![UdpSocket::bind(&unspecified_bind_addr).unwrap()];
         let retransmit_socket = UdpSocket::bind(&unspecified_bind_addr).unwrap();
         let serve_repair = UdpSocket::bind(&localhost_bind_addr).unwrap();
-        let serve_repair_quic = UdpSocket::bind(&localhost_bind_addr).unwrap();
         let ancestor_hashes_requests = UdpSocket::bind(&unspecified_bind_addr).unwrap();
 
         let mut info = ContactInfo::new(
@@ -2983,11 +2981,6 @@ impl Node {
             serve_repair.local_addr().unwrap(),
             "serve-repair"
         );
-        set_socket!(
-            set_serve_repair_quic,
-            serve_repair_quic.local_addr().unwrap(),
-            "serve-repair QUIC"
-        );
         Node {
             info,
             sockets: Sockets {
@@ -3002,7 +2995,6 @@ impl Node {
                 repair,
                 retransmit_sockets: vec![retransmit_socket],
                 serve_repair,
-                serve_repair_quic,
                 ancestor_hashes_requests,
                 tpu_quic,
                 tpu_forwards_quic,
@@ -3077,7 +3069,6 @@ impl Node {
         let (_, retransmit_socket) = Self::bind(bind_ip_addr, port_range);
         let (_, repair) = Self::bind(bind_ip_addr, port_range);
         let (serve_repair_port, serve_repair) = Self::bind(bind_ip_addr, port_range);
-        let (serve_repair_quic_port, serve_repair_quic) = Self::bind(bind_ip_addr, port_range);
         let (_, broadcast) = Self::bind(bind_ip_addr, port_range);
         let (_, ancestor_hashes_requests) = Self::bind(bind_ip_addr, port_range);
 
@@ -3107,11 +3098,6 @@ impl Node {
         set_socket!(set_rpc, rpc_port, "RPC");
         set_socket!(set_rpc_pubsub, rpc_pubsub_port, "RPC-pubsub");
         set_socket!(set_serve_repair, serve_repair_port, "serve-repair");
-        set_socket!(
-            set_serve_repair_quic,
-            serve_repair_quic_port,
-            "serve-repair QUIC"
-        );
         trace!("new ContactInfo: {:?}", info);
 
         Node {
@@ -3128,7 +3114,6 @@ impl Node {
                 repair,
                 retransmit_sockets: vec![retransmit_socket],
                 serve_repair,
-                serve_repair_quic,
                 ancestor_hashes_requests,
                 tpu_quic,
                 tpu_forwards_quic,
@@ -3192,7 +3177,6 @@ impl Node {
 
         let (_, repair) = Self::bind(bind_ip_addr, port_range);
         let (serve_repair_port, serve_repair) = Self::bind(bind_ip_addr, port_range);
-        let (serve_repair_quic_port, serve_repair_quic) = Self::bind(bind_ip_addr, port_range);
 
         let (_, broadcast) =
             multi_bind_in_range(bind_ip_addr, port_range, 4).expect("broadcast multi_bind");
@@ -3216,8 +3200,6 @@ impl Node {
         .unwrap();
         info.set_tpu_vote((addr, tpu_vote_port)).unwrap();
         info.set_serve_repair((addr, serve_repair_port)).unwrap();
-        info.set_serve_repair_quic((addr, serve_repair_quic_port))
-            .unwrap();
         trace!("new ContactInfo: {:?}", info);
 
         Node {
@@ -3233,7 +3215,6 @@ impl Node {
                 repair,
                 retransmit_sockets,
                 serve_repair,
-                serve_repair_quic,
                 ip_echo: Some(ip_echo),
                 ancestor_hashes_requests,
                 tpu_quic,

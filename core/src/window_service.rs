@@ -8,7 +8,6 @@ use {
         completed_data_sets_service::CompletedDataSetsSender,
         repair::{
             ancestor_hashes_service::AncestorHashesReplayUpdateReceiver,
-            quic_endpoint::LocalRequest,
             repair_response,
             repair_service::{
                 DumpedSlotsReceiver, OutstandingShredRepairs, PopularPrunedForksSender, RepairInfo,
@@ -46,7 +45,6 @@ use {
         thread::{self, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 type ShredPayload = Vec<u8>;
@@ -376,8 +374,6 @@ impl WindowService {
         retransmit_sender: Sender<Vec<ShredPayload>>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
-        repair_quic_endpoint_sender: AsyncSender<LocalRequest>,
-        repair_quic_endpoint_response_sender: Sender<(SocketAddr, Vec<u8>)>,
         exit: Arc<AtomicBool>,
         repair_info: RepairInfo,
         leader_schedule_cache: Arc<LeaderScheduleCache>,
@@ -401,8 +397,6 @@ impl WindowService {
             exit.clone(),
             repair_socket,
             ancestor_hashes_socket,
-            repair_quic_endpoint_sender,
-            repair_quic_endpoint_response_sender,
             repair_info,
             verified_vote_receiver,
             outstanding_repair_requests.clone(),

@@ -496,9 +496,6 @@ pub struct Validator {
     turbine_quic_endpoint: Option<Endpoint>,
     turbine_quic_endpoint_runtime: Option<TokioRuntime>,
     turbine_quic_endpoint_join_handle: Option<solana_turbine::quic_endpoint::AsyncTryJoinHandle>,
-    repair_quic_endpoint: Option<Endpoint>,
-    repair_quic_endpoint_runtime: Option<TokioRuntime>,
-    repair_quic_endpoint_join_handle: Option<repair::quic_endpoint::AsyncTryJoinHandle>,
 }
 
 impl Validator {
@@ -1155,13 +1152,8 @@ impl Validator {
             bank_forks.clone(),
             config.repair_whitelist.clone(),
         );
-        let (repair_quic_endpoint_sender, repair_quic_endpoint_receiver) = unbounded();
         let serve_repair_service = ServeRepairService::new(
             serve_repair,
-            // Incoming UDP repair requests are adapted into RemoteRequest
-            // and also sent through the same channel.
-            repair_quic_endpoint_sender.clone(),
-            repair_quic_endpoint_receiver,
             blockstore.clone(),
             node.sockets.serve_repair,
             socket_addr_space,
@@ -1263,35 +1255,6 @@ impl Validator {
             .unwrap()
         };
 
-        // Repair quic endpoint.
-        let repair_quic_endpoint_runtime = (current_runtime_handle.is_err()
-            && genesis_config.cluster_type != ClusterType::MainnetBeta)
-            .then(|| {
-                tokio::runtime::Builder::new_multi_thread()
-                    .enable_all()
-                    .thread_name("solRepairQuic")
-                    .build()
-                    .unwrap()
-            });
-        let (repair_quic_endpoint, repair_quic_endpoint_sender, repair_quic_endpoint_join_handle) =
-            if genesis_config.cluster_type == ClusterType::MainnetBeta {
-                let (sender, _receiver) = tokio::sync::mpsc::channel(1);
-                (None, sender, None)
-            } else {
-                repair::quic_endpoint::new_quic_endpoint(
-                    repair_quic_endpoint_runtime
-                        .as_ref()
-                        .map(TokioRuntime::handle)
-                        .unwrap_or_else(|| current_runtime_handle.as_ref().unwrap()),
-                    &identity_keypair,
-                    node.sockets.serve_repair_quic,
-                    repair_quic_endpoint_sender,
-                    bank_forks.clone(),
-                )
-                .map(|(endpoint, sender, join_handle)| (Some(endpoint), sender, Some(join_handle)))
-                .unwrap()
-            };
-
         let in_wen_restart = config.wen_restart_proto_path.is_some() && !waited_for_supermajority;
         let wen_restart_repair_slots = if in_wen_restart {
             Some(Arc::new(RwLock::new(Vec::new())))
@@ -1370,7 +1333,6 @@ impl Validator {
             banking_tracer.clone(),
             turbine_quic_endpoint_sender.clone(),
             turbine_quic_endpoint_receiver,
-            repair_quic_endpoint_sender,
             outstanding_repair_requests.clone(),
             cluster_slots.clone(),
             wen_restart_repair_slots.clone(),
@@ -1498,9 +1460,6 @@ impl Validator {
             turbine_quic_endpoint,
             turbine_quic_endpoint_runtime,
             turbine_quic_endpoint_join_handle,
-            repair_quic_endpoint,
-            repair_quic_endpoint_runtime,
-            repair_quic_endpoint_join_handle,
         })
     }
 
@@ -1612,18 +1571,9 @@ impl Validator {
         }
 
         self.gossip_service.join().expect("gossip_service");
-        if let Some(repair_quic_endpoint) = &self.repair_quic_endpoint {
-            repair::quic_endpoint::close_quic_endpoint(repair_quic_endpoint);
-        }
         self.serve_repair_service
             .join()
             .expect("serve_repair_service");
-        if let Some(repair_quic_endpoint_join_handle) = self.repair_quic_endpoint_join_handle {
-            self.repair_quic_endpoint_runtime
-                .map(|runtime| runtime.block_on(repair_quic_endpoint_join_handle))
-                .transpose()
-                .unwrap();
-        };
         self.stats_reporter_service
             .join()
             .expect("stats_reporter_service");

@@ -3521,7 +3521,7 @@ pub mod rpc_full {
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             serve_repair: contact_info
-                                .serve_repair(Protocol::UDP)
+                                .serve_repair()
                                 .ok()
                                 .filter(|addr| socket_addr_space.check(addr)),
                             rpc: contact_info

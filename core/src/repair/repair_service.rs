@@ -13,10 +13,9 @@ use {
             ancestor_hashes_service::{AncestorHashesReplayUpdateReceiver, AncestorHashesService},
             duplicate_repair_status::AncestorDuplicateSlotToRepair,
             outstanding_requests::OutstandingRequests,
-            quic_endpoint::LocalRequest,
             repair_weight::RepairWeight,
             serve_repair::{
-                self, RepairProtocol, RepairRequestHeader, ServeRepair, ShredRepairType,
+                RepairProtocol, RepairRequestHeader, ServeRepair, ShredRepairType,
                 REPAIR_PEERS_CACHE_CAPACITY,
             },
         },
@@ -24,7 +23,6 @@ use {
     crossbeam_channel::{Receiver as CrossbeamReceiver, Sender as CrossbeamSender},
     lru::LruCache,
     rand::seq::SliceRandom,
-    solana_client::connection_cache::Protocol,
     solana_gossip::cluster_info::ClusterInfo,
     solana_ledger::{
         blockstore::{Blockstore, SlotMeta},
@@ -52,7 +50,6 @@ use {
         thread::{self, sleep, Builder, JoinHandle},
         time::{Duration, Instant},
     },
-    tokio::sync::mpsc::Sender as AsyncSender,
 };
 
 // Time to defer repair requests to allow for turbine propagation
@@ -254,8 +251,6 @@ impl RepairService {
         exit: Arc<AtomicBool>,
         repair_socket: Arc<UdpSocket>,
         ancestor_hashes_socket: Arc<UdpSocket>,
-        quic_endpoint_sender: AsyncSender<LocalRequest>,
-        quic_endpoint_response_sender: CrossbeamSender<(SocketAddr, Vec<u8>)>,
         repair_info: RepairInfo,
         verified_vote_receiver: VerifiedVoteReceiver,
         outstanding_requests: Arc<RwLock<OutstandingShredRepairs>>,
@@ -267,7 +262,6 @@ impl RepairService {
             let blockstore = blockstore.clone();
             let exit = exit.clone();
             let repair_info = repair_info.clone();
-            let quic_endpoint_sender = quic_endpoint_sender.clone();
             Builder::new()
                 .name("solRepairSvc".to_string())
                 .spawn(move || {
@@ -275,8 +269,6 @@ impl RepairService {
                         &blockstore,
                         &exit,
                         &repair_socket,
-                        &quic_endpoint_sender,
-                        &quic_endpoint_response_sender,
                         repair_info,
                         verified_vote_receiver,
                         &outstanding_requests,
@@ -291,7 +283,6 @@ impl RepairService {
             exit,
             blockstore,
             ancestor_hashes_socket,
-            quic_endpoint_sender,
             repair_info,
             ancestor_hashes_replay_update_receiver,
         );
@@ -307,8 +298,6 @@ impl RepairService {
         blockstore: &Blockstore,
         exit: &AtomicBool,
         repair_socket: &UdpSocket,
-        quic_endpoint_sender: &AsyncSender<LocalRequest>,
-        quic_endpoint_response_sender: &CrossbeamSender<(SocketAddr, Vec<u8>)>,
         repair_info: RepairInfo,
         verified_vote_receiver: VerifiedVoteReceiver,
         outstanding_requests: &RwLock<OutstandingShredRepairs>,
@@ -336,7 +325,6 @@ impl RepairService {
             let mut add_votes_elapsed;
 
             let root_bank = repair_info.bank_forks.read().unwrap().root_bank();
-            let repair_protocol = serve_repair::get_repair_protocol(root_bank.cluster_type());
             let repairs = {
                 let new_root = root_bank.slot();
 
@@ -464,9 +452,6 @@ impl RepairService {
                                 &repair_info.repair_validators,
                                 &mut outstanding_requests,
                                 identity_keypair,
-                                quic_endpoint_sender,
-                                quic_endpoint_response_sender,
-                                repair_protocol,
                             )
                             .ok()??;
                         Some((req, to))
@@ -767,8 +752,8 @@ impl RepairService {
         let repair_peers: Vec<(Pubkey, SocketAddr, u32)> = peers_with_slot
             .iter()
             .filter_map(|(pubkey, stake)| {
-                let peer_repair_addr = cluster_info
-                    .lookup_contact_info(pubkey, |node| node.serve_repair(Protocol::UDP));
+                let peer_repair_addr =
+                    cluster_info.lookup_contact_info(pubkey, |node| node.serve_repair());
                 if let Some(Ok(peer_repair_addr)) = peer_repair_addr {
                     trace!("Repair peer {pubkey} has a valid repair socket: {peer_repair_addr:?}");
                     Some((
@@ -814,7 +799,7 @@ impl RepairService {
         // Check validity of passed in peer.
         if let Some(pubkey) = pubkey {
             let peer_repair_addr =
-                cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair(Protocol::UDP));
+                cluster_info.lookup_contact_info(&pubkey, |node| node.serve_repair());
             if let Some(Ok(peer_repair_addr)) = peer_repair_addr {
                 trace!("Repair peer {pubkey} has valid repair socket: {peer_repair_addr:?}");
                 repair_peers.push((pubkey, peer_repair_addr));
@@ -1066,7 +1051,6 @@ pub(crate) fn sleep_shred_deferment_period() {
 mod test {
     use {
         super::*,
-        crate::repair::quic_endpoint::RemoteRequest,
         solana_gossip::{cluster_info::Node, contact_info::ContactInfo},
         solana_ledger::{
             blockstore::{
@@ -1118,19 +1102,9 @@ mod test {
         let mut packets = vec![solana_sdk::packet::Packet::default(); 1];
         let _recv_count = solana_streamer::recvmmsg::recv_mmsg(&reader, &mut packets[..]).unwrap();
         let packet = &packets[0];
-        let Some(bytes) = packet.data(..).map(Vec::from) else {
-            panic!("packet data not found");
-        };
-        let remote_request = RemoteRequest {
-            remote_pubkey: None,
-            remote_address: packet.meta().socket_addr(),
-            bytes,
-            response_sender: None,
-        };
 
         // Deserialize and check the request
-        let deserialized =
-            serve_repair::deserialize_request::<RepairProtocol>(&remote_request).unwrap();
+        let deserialized = packet.deserialize_slice(..).unwrap();
         match deserialized {
             RepairProtocol::WindowIndex {
                 slot: deserialized_slot,
